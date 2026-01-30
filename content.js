@@ -136,6 +136,30 @@ function smoothScrollTo(endY, duration) {
   });
 }
 
+function sendTouchEvent(element, eventType) {
+  const touchObj = new Touch({
+    identifier: Date.now(),
+    target: element,
+    clientX: 100,
+    clientY: 100,
+    radiusX: 2.5,
+    radiusY: 2.5,
+    rotationAngle: 10,
+    force: 0.5,
+  });
+
+  const touchEvent = new TouchEvent(eventType, {
+    cancelable: true,
+    bubbles: true,
+    touches: [touchObj],
+    targetTouches: [touchObj],
+    changedTouches: [touchObj],
+    shiftedKey: false
+  });
+
+  element.dispatchEvent(touchEvent);
+}
+
 function easeInOutQuart(t, b, c, d) {
   if ((t /= d / 2) < 1) return c / 2 * t * t * t * t + b;
   return -c / 2 * ((t -= 2) * t * t * t - 2) + b;
