@@ -1,20 +1,263 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
   <meta charset="UTF-8">
-  <title>Bing Auto</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Okie-Dokie!</title>
   <style>
-    body { font-family: Arial; padding: 16px; width: 220px; text-align: center; }
-    button { margin: 8px; padding: 10px 20px; font-size: 16px; cursor: pointer; }
-    #status { margin-top: 12px; font-weight: bold; }
+    :root {
+      --bg-color: #0f172a;
+      --card-bg: #1e293b;
+      --text-main: #f1f5f9;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --danger: #ef4444;
+      --danger-hover: #dc2626;
+      --success: #10b981;
+      --border-radius: 12px;
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      margin: 0;
+      padding: 0;
+      width: 320px;
+      user-select: none;
+    }
+
+    .container {
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+
+    h1 {
+      font-size: 20px;
+      margin: 0;
+      font-weight: 700;
+      background: linear-gradient(90deg, #60a5fa, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .card {
+      background-color: var(--card-bg);
+      border-radius: var(--border-radius);
+      padding: 16px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 12px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 600;
+      background-color: rgba(148, 163, 184, 0.2);
+      color: var(--text-muted);
+      transition: all 0.3s ease;
+    }
+
+    .status-badge.running {
+      background-color: rgba(16, 185, 129, 0.2);
+      color: var(--success);
+      box-shadow: 0 0 10px rgba(16, 185, 129, 0.2);
+    }
+
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    label {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    input[type="number"] {
+      background: var(--bg-color);
+      border: 1px solid #334155;
+      color: white;
+      padding: 6px 10px;
+      border-radius: 6px;
+      width: 60px;
+      text-align: center;
+      font-size: 14px;
+    }
+
+    /* Toggle Switch */
+    .toggle {
+      position: relative;
+      display: inline-block;
+      width: 44px;
+      height: 24px;
+    }
+
+    .toggle input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background-color: #334155;
+      transition: .4s;
+      border-radius: 34px;
+    }
+
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 18px;
+      width: 18px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: .4s;
+      border-radius: 50%;
+    }
+
+    input:checked+.slider {
+      background-color: var(--primary);
+    }
+
+    input:checked+.slider:before {
+      transform: translateX(20px);
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    button {
+      flex: 1;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-primary {
+      background-color: var(--primary);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background-color: var(--primary-hover);
+    }
+
+    .btn-danger {
+      background-color: var(--danger);
+      color: white;
+    }
+
+    .btn-danger:hover {
+      background-color: var(--danger-hover);
+    }
+
+    .btn-disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      filter: grayscale(1);
+    }
+
+    .progress-info {
+      text-align: center;
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-top: 6px;
+    }
+
+    #progressBar {
+      height: 4px;
+      background-color: #334155;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+
+    #progressFill {
+      height: 100%;
+      width: 0%;
+      background-color: var(--primary);
+      transition: width 0.5s ease;
+    }
   </style>
 </head>
+
 <body>
-  <h3>Bing Auto Search</h3>
-  <button id="start">Iniciar bucle</button>
-  <button id="stop">Detener</button>
-  <div id="status">Estado: detenido</div>
+
+  <div class="container">
+    <header>
+      <h1>Okie-Dokie!</h1>
+      <span id="statusBadge" class="status-badge">Inactivo</span>
+    </header>
+
+    <!-- Settings Card -->
+    <div class="card control-group">
+      <div class="row">
+        <label for="mobileMode">Modo Móvil</label>
+        <label class="toggle">
+          <input type="checkbox" id="mobileMode">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="row">
+        <label for="maxSearches">Búsquedas</label>
+        <input type="number" id="maxSearches" value="30" min="1" max="100">
+      </div>
+    </div>
+
+    <!-- Actions & Progress -->
+    <div class="card">
+      <div class="actions">
+        <button id="startBtn" class="btn-primary">Iniciar</button>
+        <button id="stopBtn" class="btn-danger btn-disabled">Parar</button>
+      </div>
+
+      <div id="progressArea" style="opacity: 0.5; transition: opacity 0.3s;">
+        <div id="progressBar">
+          <div id="progressFill"></div>
+        </div>
+        <div class="progress-info">
+          Búsqueda <span id="currentCount">0</span> de <span id="totalCount">30</span>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script src="popup.js"></script>
 </body>
+
 </html>

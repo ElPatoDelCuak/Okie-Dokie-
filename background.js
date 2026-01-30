@@ -1,124 +1,155 @@
-// background.js - Con re-inyección en página de resultados
+// background.js - v2.3 Fixed Mobile Points & Desktop Tabs
 
-console.log("background.js (service worker) iniciado / despertado");
+let state = {
+  isRunning: false,
+  loopId: null,
+  currentCount: 0,
+  maxSearches: 30,
+  mobileMode: false,
+  tabId: null,
+  winId: null
+};
 
-let isRunning = false;
-let loopTimeout = null;
+// Fallback dictionary
+const FALLBACK_WORDS = ["clima", "tiempo", "noticias", "futbol", "cine", "recetas", "mapas", "traductor", "vuelos", "hoteles", "juegos", "musica", "videojuegos", "tecnologia", "ciencia", "historia", "libros", "arte", "moda", "coches"];
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log("Mensaje recibido en background:", message, "desde:", sender);
+// DNR Mobile UA Rule (Edge Mobile for better Bing compatibility)
+async function setMobileUserAgent(enable) {
+  const ruleId = 1;
+  // Edge on Android UA (Verified for text collection)
+  const mobileUA = "Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36 EdgA/116.0.1938.69";
 
-  if (message.action === "startLoop") {
-    if (isRunning) {
-      console.log("Ya está corriendo, ignorando");
-      sendResponse({ status: "already_running" });
-      return true;
-    }
-    isRunning = true;
-    console.log("Iniciando bucle de búsquedas");
-    startSearchLoop();
+  if (enable) {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: [ruleId],
+      addRules: [{
+        "id": ruleId,
+        "priority": 1,
+        "action": {
+          "type": "modifyHeaders",
+          "requestHeaders": [
+            { "header": "User-Agent", "operation": "set", "value": mobileUA },
+            { "header": "Sec-CH-UA", "operation": "set", "value": "\"Chromium\";v=\"116\", \"Not)A;Brand\";v=\"24\", \"Microsoft Edge\";v=\"116\"" },
+            { "header": "Sec-CH-UA-Mobile", "operation": "set", "value": "?1" },
+            { "header": "Sec-CH-UA-Platform", "operation": "set", "value": "\"Android\"" },
+            { "header": "Sec-CH-UA-Platform-Version", "operation": "set", "value": "\"13.0.0\"" },
+            { "header": "Sec-CH-UA-Model", "operation": "set", "value": "\"Pixel 7 Pro\"" }
+          ]
+        },
+        "condition": {
+          "urlFilter": "bing.com",
+          "resourceTypes": ["main_frame", "sub_frame", "xmlhttprequest", "script", "image", "stylesheet"]
+        }
+      }]
+    });
+  } else {
+    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [ruleId] });
+  }
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.action === "startLoop") {
+    if (state.isRunning) { return true; }
+    state = { ...state, ...msg.config, isRunning: true, currentCount: 0 };
+    setMobileUserAgent(state.mobileMode).then(startSearchLoop);
     sendResponse({ status: "started" });
-    return true;
-  } else if (message.action === "stopLoop") {
-    isRunning = false;
-    if (loopTimeout) clearTimeout(loopTimeout);
-    console.log("Bucle detenido");
+  } else if (msg.action === "stopLoop") {
+    stopLoop();
     sendResponse({ status: "stopped" });
-    return true;
-  } else if (message.action === "closeWindow") {
+  } else if (msg.action === "getStatus") {
+    sendResponse(state);
+  } else if (msg.action === "closeWindow") {
     if (sender.tab && sender.tab.id) {
-      console.log("Cerrando pestaña:", sender.tab.id);
-      chrome.tabs.remove(sender.tab.id);
+      chrome.tabs.remove(sender.tab.id).catch(() => { });
     }
-    return true;
   }
 });
 
 async function startSearchLoop() {
-  if (!isRunning) return;
-
-  let query;
-  try {
-    const response = await fetch('https://opentdb.com/api.php?amount=1');
-    const data = await response.json();
-    if (data.results && data.results.length > 0) {
-      query = data.results[0].question;
-      // Decodificar entidades HTML
-      query = query.replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
-    } else {
-      console.error("No se obtuvieron resultados de la API");
-      return;
-    }
-  } catch (err) {
-    console.error("Error al obtener pregunta de la API:", err);
+  if (!state.isRunning || state.currentCount >= state.maxSearches) {
+    if (state.isRunning) stopLoop();
     return;
   }
 
-  console.log("Procesando búsqueda:", query);
+  state.currentCount++;
+  broadcastStatus();
+
+  const query = await getQuery();
 
   try {
-    const newTab = await chrome.tabs.create({
-      url: "https://www.bing.com/",
-      active: true
-    });
+    // Desktop: Uses TABS as requested
+    // Mobile: Uses WINDOWS to enforce dimensions (Critical for detection)
 
-    const tabId = newTab.id;
+    if (state.mobileMode) {
+      let createData = {
+        url: "https://www.bing.com",
+        focused: true,
+        width: 412,
+        height: 850,
+        type: "popup"
+      };
+      const win = await chrome.windows.create(createData);
+      state.winId = win.id;
+      state.tabId = win.tabs[0].id;
 
-    // Esperar carga inicial
-    await waitForTabComplete(tabId);
+    } else {
+      // Desktop -> Tab
+      const tab = await chrome.tabs.create({ url: "https://www.bing.com", active: true });
+      state.tabId = tab.id;
+    }
 
-    // Inyectar content.js en inicial
-    await chrome.scripting.executeScript({
-      target: { tabId: tabId },
-      files: ['content.js']
-    });
-
-    // Enviar para teclear y buscar
-    await chrome.tabs.sendMessage(tabId, { action: "performSearch", query: query });
-
-    // Detectar carga de resultados
-    const resultsListener = async (updatedTabId, changeInfo, tab) => {
-      if (updatedTabId === tabId && changeInfo.status === 'complete' && tab.url.includes('/search')) {
-        console.log("Página de resultados cargada para tabId:", tabId);
-        chrome.tabs.onUpdated.removeListener(resultsListener);
-
-        // Re-inyectar content.js en resultados
-        try {
-          await chrome.scripting.executeScript({
-            target: { tabId: tabId },
-            files: ['content.js']
-          });
-          console.log("content.js re-inyectado en resultados");
-
-          // Enviar mensaje para scrolls y cierre (después de inyección)
-          await new Promise(resolve => setTimeout(resolve, 1000)); // Pequeña espera para que se cargue el script
-          chrome.tabs.sendMessage(tabId, { action: "performScrollAndClose" });
-          console.log("Mensaje performScrollAndClose enviado");
-        } catch (err) {
-          console.error("Error al re-inyectar o enviar:", err);
-        }
-      }
-    };
-    chrome.tabs.onUpdated.addListener(resultsListener);
-
-  } catch (err) {
-    console.error("Error en el ciclo:", err);
-  }
-
-  // Delay para siguiente iteración
-  const delay = 25000 + Math.random() * 15000;
-  console.log("Programando siguiente ciclo en", delay / 1000, "segundos");
-  loopTimeout = setTimeout(startSearchLoop, delay);
-}
-
-function waitForTabComplete(tabId) {
-  return new Promise(resolve => {
-    const listener = (updatedTabId, changeInfo) => {
-      if (updatedTabId === tabId && changeInfo.status === 'complete') {
+    // Listen for initial load
+    const listener = async (tid, changeInfo, tab) => {
+      if (tid === state.tabId && changeInfo.status === 'complete') {
         chrome.tabs.onUpdated.removeListener(listener);
-        resolve();
+
+        await chrome.scripting.executeScript({ target: { tabId: tid }, files: ['content.js'] });
+        await sleep(1500);
+        chrome.tabs.sendMessage(tid, { action: "performSearch", query: query }).catch(() => { });
       }
     };
     chrome.tabs.onUpdated.addListener(listener);
-  });
+
+    // Result Page Listener (Re-inject for scrolling)
+    const resultListener = async (tid, changeInfo, tab) => {
+      if (tid === state.tabId && changeInfo.status === 'complete' && tab.url.includes('search')) {
+        await sleep(2000);
+        try {
+          await chrome.scripting.executeScript({ target: { tabId: tid }, files: ['content.js'] });
+          chrome.tabs.sendMessage(tid, { action: "performScrollAndClose" }).catch(() => { });
+          chrome.tabs.onUpdated.removeListener(resultListener);
+        } catch (e) { }
+      }
+    };
+    chrome.tabs.onUpdated.addListener(resultListener);
+
+  } catch (e) { console.error(e); }
+
+  // Schedule next
+  const delay = 25000 + Math.random() * 10000;
+  state.loopId = setTimeout(startSearchLoop, delay);
 }
+
+function stopLoop() {
+  state.isRunning = false;
+  if (state.loopId) clearTimeout(state.loopId);
+  setMobileUserAgent(false);
+  broadcastStatus();
+  chrome.runtime.sendMessage({ action: "loopStopped", ...state }).catch(() => { });
+}
+
+function broadcastStatus() {
+  chrome.runtime.sendMessage({ action: "updateProgress", ...state }).catch(() => { });
+}
+
+async function getQuery() {
+  try {
+    const r = await fetch('https://opentdb.com/api.php?amount=1');
+    const d = await r.json();
+    if (d.results?.[0]?.question) return decodeHTML(d.results[0].question);
+  } catch (e) { }
+  return FALLBACK_WORDS[Math.floor(Math.random() * FALLBACK_WORDS.length)];
+}
+
+function decodeHTML(h) { return h.replace(/&quot;/g, '"').replace(/&#039;/g, "'"); }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }

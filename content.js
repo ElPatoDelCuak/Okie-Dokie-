@@ -1,107 +1,146 @@
-// content.js - Con logs extra
+// content.js - v2.1 Fixed Typing & Scrolling
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message.action === "performSearch") {
-    console.log("Recibido performSearch");
-    performHumanLikeSearch(message.query);
+    console.log("CMD: Perform Search for", message.query);
+    typeAndSearch(message.query);
   } else if (message.action === "performScrollAndClose") {
-    console.log("Recibido performScrollAndClose");
-    performScrollAndClose();
+    console.log("CMD: Scroll & Close");
+    humanScrollAndClose();
   }
 });
 
-async function performHumanLikeSearch(query) {
+async function typeAndSearch(query) {
+  // 1. Selector strategy (Desktop & Mobile)
   const input = document.getElementById("sb_form_q") ||
-                document.querySelector('input[name="q"]') ||
-                document.querySelector('input[role="combobox"]') ||
-                document.querySelector('input[type="search"]');
+    document.querySelector('input[name="q"]') ||
+    document.querySelector('input[type="search"]');
 
   if (!input) {
-    console.error("No se encontró el input");
+    console.error("Critical: Search input not found.");
     return;
   }
 
-  console.log("Input encontrado, tecleando:", query);
-
-  input.value = "";
+  // Focus and clear properly
   input.focus();
+  input.value = "";
+  input.click(); // Trigger mobile interaction
 
+  await sleep(500);
+
+  // 2. Typing simulation (Slower & Event-heavy)
   for (const char of query) {
-    input.value += char;
-    input.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }));
+    const key = char === " " ? "Space" : `Key${char.toUpperCase()}`;
+    const code = char === " " ? "Space" : `Key${char.toUpperCase()}`;
+
+    // KeyDown
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: char, code: code, bubbles: true, composed: true }));
+    input.dispatchEvent(new KeyboardEvent('keypress', { key: char, code: code, bubbles: true, composed: true }));
+
+    // Update Value
+    document.execCommand('insertText', false, char);
+    // Fallback if execCommand is blocked (unlikely on simple inputs but good safety)
+    if (!input.value.endsWith(char)) {
+      input.value += char;
+      input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: char }));
+    }
+
+    // KeyUp
+    input.dispatchEvent(new KeyboardEvent('keyup', { key: char, code: code, bubbles: true, composed: true }));
     input.dispatchEvent(new Event('change', { bubbles: true }));
 
-    ['keydown', 'keypress', 'keyup'].forEach(type => {
-      input.dispatchEvent(new KeyboardEvent(type, {
-        key: char,
-        code: `Key${char.toUpperCase()}`,
-        bubbles: true,
-        cancelable: true,
-        composed: true
-      }));
-    });
-
-    await new Promise(r => setTimeout(r, 60 + Math.random() * 140));
+    // Variable delay (Human-like)
+    await sleep(80 + Math.random() * 120);
   }
 
-  await new Promise(r => setTimeout(r, 500 + Math.random() * 900));
+  await sleep(1000);
 
-  console.log("Intentando enviar búsqueda");
+  // 3. Submission Strategy
+  console.log("Attempting submission...");
 
-  const enterProps = {
-    key: 'Enter',
-    code: 'Enter',
-    keyCode: 13,
-    which: 13,
-    bubbles: true,
-    cancelable: true,
-    composed: true
-  };
-  input.dispatchEvent(new KeyboardEvent('keydown', enterProps));
-  input.dispatchEvent(new KeyboardEvent('keypress', enterProps));
-  input.dispatchEvent(new KeyboardEvent('keyup', enterProps));
+  // A. Try "Enter" key on input (Best for SPA)
+  const enterEvent = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };
+  input.dispatchEvent(new KeyboardEvent('keydown', enterEvent));
+  input.dispatchEvent(new KeyboardEvent('keypress', enterEvent));
+  input.dispatchEvent(new KeyboardEvent('keyup', enterEvent));
 
-  const form = input.form || input.closest('form') || document.getElementById('sb_form');
-  if (form) {
-    console.log("Submit form directo");
-    form.submit();
-  }
+  await sleep(500);
 
-  const buttons = [
-    document.getElementById('sb_form_go'),
+  // B. Search for Submit Button (Desktop & Mobile)
+  const submitBtns = [
+    document.getElementById("sb_form_go"), // Desktop
+    document.getElementById("search_icon"), // Mobile
+    document.querySelector('label[for="sb_form_go"]'), // Mobile Wrapper
     document.querySelector('input[type="submit"]'),
     document.querySelector('button[type="submit"]'),
-    document.querySelector('[aria-label="Buscar en la web"]'),
-    document.querySelector('.search.icon')
+    document.querySelector('.search.icon'),
+    document.querySelector('[aria-label="Search"]'),
+    document.querySelector('[aria-label="Buscar"]')
   ];
-  for (const btn of buttons) {
-    if (btn) {
-      console.log("Clic en botón");
+
+  for (const btn of submitBtns) {
+    if (btn && btn.offsetParent !== null) { // Visible?
+      console.log("Clicking button:", btn);
       btn.click();
-      break;
+      return; // Stop if clicked
     }
+  }
+
+  // C. Hard Form Submit (Last resort)
+  const form = input.form || document.getElementById("sb_form");
+  if (form) {
+    console.log("Hard form submit");
+    form.submit();
   }
 }
 
-async function performScrollAndClose() {
-  console.log("Iniciando scrolls y cierre");
+async function humanScrollAndClose() {
+  // Smoother logic
+  const totalHeight = document.body.scrollHeight;
+  const viewportHeight = window.innerHeight;
 
-  await new Promise(r => setTimeout(r, 2000 + Math.random() * 3000));
+  if (totalHeight > viewportHeight) {
+    // Scroll Down
+    await smoothScrollTo(Math.min(totalHeight, viewportHeight + 400), 1000);
+    await sleep(1000 + Math.random() * 1000);
 
-  console.log("Scroll 1: abajo 400px");
-  window.scrollBy({ top: 400, behavior: 'smooth' });
-  await new Promise(r => setTimeout(r, 1800 + Math.random() * 1000));
+    // Scroll Up a bit
+    await smoothScrollTo(Math.max(0, window.scrollY - 300), 800);
+    await sleep(1000 + Math.random() * 1000);
 
-  console.log("Scroll 2: arriba 500px");
-  window.scrollBy({ top: -500, behavior: 'smooth' });
-  await new Promise(r => setTimeout(r, 2200 + Math.random() * 1000));
+    // Scroll Down more
+    await smoothScrollTo(Math.min(totalHeight, window.scrollY + 600), 1000);
+    await sleep(2000);
+  }
 
-  console.log("Scroll 3: abajo 600px");
-  window.scrollBy({ top: 600, behavior: 'smooth' });
-  await new Promise(r => setTimeout(r, 2500 + Math.random() * 1000));
-
-  await new Promise(r => setTimeout(r, 5000 + Math.random() * 7000));
-
-  console.log("Enviando cierre de ventana");
+  console.log("Closing...");
   chrome.runtime.sendMessage({ action: "closeWindow" });
+}
+
+// Helper: Custom Smooth Scroll (better than behavior: smooth for automation)
+function smoothScrollTo(endY, duration) {
+  const startY = window.scrollY;
+  const distance = endY - startY;
+  const startTime = new Date().getTime();
+
+  return new Promise(resolve => {
+    const timer = setInterval(() => {
+      const time = new Date().getTime() - startTime;
+      const newX = easeInOutQuart(time, startY, distance, duration);
+      window.scrollTo(0, newX);
+      if (time >= duration) {
+        clearInterval(timer);
+        resolve();
+      }
+    }, 1000 / 60);
+  });
+}
+
+function easeInOutQuart(t, b, c, d) {
+  if ((t /= d / 2) < 1) return c / 2 * t * t * t * t + b;
+  return -c / 2 * ((t -= 2) * t * t * t - 2) + b;
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }

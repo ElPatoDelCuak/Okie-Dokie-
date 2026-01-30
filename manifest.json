@@ -1,15 +1,18 @@
 {
   "manifest_version": 3,
   "name": "Okie-dokie!",
-  "version": "1.0",
-  "description": "La carli me pone como una moto.",
+  "version": "2.0",
+  "description": "Automatización de búsquedas en Bing (Escritorio y Móvil).",
   "permissions": [
     "scripting",
     "tabs",
-    "windows"
+    "windows",
+    "storage",
+    "declarativeNetRequest"
   ],
   "host_permissions": [
-    "*://*.bing.com/*"
+    "*://*.bing.com/*",
+    "*://opentdb.com/*"
   ],
   "background": {
     "service_worker": "background.js"
