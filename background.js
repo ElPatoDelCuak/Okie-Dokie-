@@ -1,4 +1,4 @@
-// background.js - v2.3 Fixed Mobile Points & Desktop Tabs
+// background.js - v3.0 CDP Device Emulation (like DevTools F12 device mode)
 
 let state = {
   isRunning: false,
@@ -13,45 +13,76 @@ let state = {
 // Fallback dictionary
 const FALLBACK_WORDS = ["clima", "tiempo", "noticias", "futbol", "cine", "recetas", "mapas", "traductor", "vuelos", "hoteles", "juegos", "musica", "videojuegos", "tecnologia", "ciencia", "historia", "libros", "arte", "moda", "coches"];
 
-// DNR Mobile UA Rule (Edge Mobile for better Bing compatibility)
-async function setMobileUserAgent(enable) {
-  const ruleId = 1;
-  // Edge on Android UA (Verified for text collection)
-  const mobileUA = "Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36 EdgA/116.0.1938.69";
+// Pixel 7 Pro device profile (matches DevTools device list)
+const MOBILE_DEVICE = {
+  userAgent: "Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36 EdgA/116.0.1938.69",
+  width: 412,
+  height: 915,
+  deviceScaleFactor: 3.5
+};
 
-  if (enable) {
-    await chrome.declarativeNetRequest.updateDynamicRules({
-      removeRuleIds: [ruleId],
-      addRules: [{
-        "id": ruleId,
-        "priority": 1,
-        "action": {
-          "type": "modifyHeaders",
-          "requestHeaders": [
-            { "header": "User-Agent", "operation": "set", "value": mobileUA },
-            { "header": "Sec-CH-UA", "operation": "set", "value": "\"Chromium\";v=\"116\", \"Not)A;Brand\";v=\"24\", \"Microsoft Edge\";v=\"116\"" },
-            { "header": "Sec-CH-UA-Mobile", "operation": "set", "value": "?1" },
-            { "header": "Sec-CH-UA-Platform", "operation": "set", "value": "\"Android\"" },
-            { "header": "Sec-CH-UA-Platform-Version", "operation": "set", "value": "\"13.0.0\"" },
-            { "header": "Sec-CH-UA-Model", "operation": "set", "value": "\"Pixel 7 Pro\"" }
-          ]
-        },
-        "condition": {
-          "urlFilter": "bing.com",
-          "resourceTypes": ["main_frame", "sub_frame", "xmlhttprequest", "script", "image", "stylesheet"]
-        }
-      }]
+// Attach Chrome DevTools Protocol to tab and set full mobile emulation
+// (same as picking a device in DevTools > Toggle device toolbar)
+async function attachMobileEmulation(tabId) {
+  try {
+    await chrome.debugger.attach({ tabId }, "1.3");
+
+    // 1. Override viewport dimensions + mobile flag (critical for Bing detection)
+    await chrome.debugger.sendCommand({ tabId }, "Emulation.setDeviceMetricsOverride", {
+      width: MOBILE_DEVICE.width,
+      height: MOBILE_DEVICE.height,
+      deviceScaleFactor: MOBILE_DEVICE.deviceScaleFactor,
+      mobile: true,
+      screenOrientation: { angle: 0, type: "portraitPrimary" }
     });
-  } else {
-    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: [ruleId] });
+
+    // 2. Override User-Agent + Client Hints (same as DevTools Network conditions)
+    await chrome.debugger.sendCommand({ tabId }, "Network.setUserAgentOverride", {
+      userAgent: MOBILE_DEVICE.userAgent,
+      acceptLanguage: "es-ES,es;q=0.9",
+      platform: "Linux armv8l",
+      userAgentMetadata: {
+        brands: [
+          { brand: "Chromium", version: "116" },
+          { brand: "Not)A;Brand", version: "24" },
+          { brand: "Microsoft Edge", version: "116" }
+        ],
+        fullVersionList: [
+          { brand: "Chromium", version: "116.0.5845.190" },
+          { brand: "Not)A;Brand", version: "24.0.0.0" },
+          { brand: "Microsoft Edge", version: "116.0.1938.69" }
+        ],
+        platform: "Android",
+        platformVersion: "13.0.0",
+        architecture: "arm",
+        model: "Pixel 7 Pro",
+        mobile: true
+      }
+    });
+
+    // 3. Enable touch events (Bing checks for these)
+    await chrome.debugger.sendCommand({ tabId }, "Emulation.setTouchEmulationEnabled", {
+      enabled: true,
+      maxTouchPoints: 5
+    });
+
+    console.log("[CDP] Mobile emulation active on tab", tabId);
+    return true;
+  } catch (e) {
+    console.error("[CDP] Failed to attach:", e);
+    return false;
   }
+}
+
+async function detachDebugger(tabId) {
+  try { await chrome.debugger.detach({ tabId }); } catch (e) { }
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.action === "startLoop") {
     if (state.isRunning) { return true; }
     state = { ...state, ...msg.config, isRunning: true, currentCount: 0 };
-    setMobileUserAgent(state.mobileMode).then(startSearchLoop);
+    startSearchLoop();
     sendResponse({ status: "started" });
   } else if (msg.action === "stopLoop") {
     stopLoop();
@@ -60,7 +91,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse(state);
   } else if (msg.action === "closeWindow") {
     if (sender.tab && sender.tab.id) {
-      chrome.tabs.remove(sender.tab.id).catch(() => { });
+      const tid = sender.tab.id;
+      detachDebugger(tid).finally(() => chrome.tabs.remove(tid).catch(() => { }));
     }
   }
 });
@@ -81,16 +113,22 @@ async function startSearchLoop() {
     // Mobile: Uses WINDOWS to enforce dimensions (Critical for detection)
 
     if (state.mobileMode) {
-      let createData = {
-        url: "https://www.bing.com",
+      // 1. Create popup with blank page (so we can attach CDP before Bing loads)
+      const win = await chrome.windows.create({
+        url: "about:blank",
         focused: true,
-        width: 412,
-        height: 850,
+        width: MOBILE_DEVICE.width,
+        height: MOBILE_DEVICE.height + 80, // +80 for chrome bar
         type: "popup"
-      };
-      const win = await chrome.windows.create(createData);
+      });
       state.winId = win.id;
       state.tabId = win.tabs[0].id;
+
+      // 2. Attach CDP device emulation (Pixel 7 Pro, like DevTools F12 device mode)
+      await attachMobileEmulation(state.tabId);
+
+      // 3. Now navigate to Bing — it will load already seeing mobile emulation
+      await chrome.tabs.update(state.tabId, { url: "https://www.bing.com" });
 
     } else {
       // Desktop -> Tab
@@ -133,7 +171,7 @@ async function startSearchLoop() {
 function stopLoop() {
   state.isRunning = false;
   if (state.loopId) clearTimeout(state.loopId);
-  setMobileUserAgent(false);
+  if (state.tabId) detachDebugger(state.tabId);
   broadcastStatus();
   chrome.runtime.sendMessage({ action: "loopStopped", ...state }).catch(() => { });
 }

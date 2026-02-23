@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "Okie-dokie!",
-  "version": "2.0",
+  "version": "3.0",
   "description": "Automatización de búsquedas en Bing (Escritorio y Móvil).",
   "permissions": [
     "scripting",
     "tabs",
     "windows",
     "storage",
-    "declarativeNetRequest"
+    "declarativeNetRequest",
+    "debugger"
   ],
   "host_permissions": [
     "*://*.bing.com/*",
